@@ -33,4 +33,6 @@
 
 运行 `npm run lint` 和 `npm run build` 检查代码及生产构建。
 
-上游基线为 `20b4c9b`，完整提交历史和 [MIT 许可证](LICENSE) 均保留。中文菜单、对话框、中转配置、无 mask 兼容及本地转发是本版本的修改。英文原始说明见 [README.md](README.md)。
+上游基线为 `20b4c9b`，[MIT 许可证](LICENSE) 保留。中文菜单、对话框、中转配置、无 mask 兼容及本地转发是本版本的修改。英文原始说明见 [README.md](README.md)。
+
+GitHub 的 main 分支为独立源码快照。当前发布令牌没有 workflow 权限，因此未上传上游 CI 文件及其历史；完整上游历史和中文修改分支保留在本地。可通过上述命令在本机执行相同检查。

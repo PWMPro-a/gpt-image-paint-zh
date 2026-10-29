@@ -12,3 +12,6 @@ dist
 *.tsbuildinfo
 /launch-video/
 /worklog.md
+
+# CI workflows remain local; the publishing token lacks workflow scope.
+/.github/workflows/
