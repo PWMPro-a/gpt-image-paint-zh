@@ -1,0 +1,234 @@
+import { createContext, useContext, useEffect, useRef, useState, type JSX, type ReactNode, type RefObject } from 'react';
+import { useEditor, useEditorState } from '../hooks';
+import { MODELS, type ModelId, type Quality } from '../paint/ai';
+import { Icon } from './Icons';
+import type { WorkspaceHandle } from './Workspace';
+import { resolvedTheme } from '../theme';
+
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+
+/** One dropdown for model × quality keeps the top-right compact. */
+const MODEL_PRESETS: { value: string; label: string }[] = [
+  { value: 'gpt-image-2.5-flare|medium', label: 'Flare · 快速 · 中' },
+  { value: 'gpt-image-2.5-flare|high', label: 'Flare · 快速 · 高' },
+  { value: 'gpt-image-2.5-sunburst|medium', label: 'Sunburst · 精准 · 中' },
+  { value: 'gpt-image-2.5-sunburst|high', label: 'Sunburst · 精准 · 高' },
+];
+
+
+const MOD = isMac ? '⌘' : 'Ctrl+';
+
+interface MenuCtx {
+  open: string | null;
+  setOpen: (id: string | null) => void;
+}
+const Ctx = createContext<MenuCtx>({ open: null, setOpen: () => {} });
+
+const MENU_IDS = ['file', 'edit', 'view', 'image', 'colors', 'help'];
+
+function Menu({ id, label, children }: { id: string; label: string; children: ReactNode }): JSX.Element {
+  const { open, setOpen } = useContext(Ctx);
+  const isOpen = open === id;
+  const popup = useRef<HTMLDivElement>(null);
+  const btn = useRef<HTMLButtonElement>(null);
+  const items = () => Array.from(popup.current?.querySelectorAll<HTMLButtonElement>('.menu-item:not(:disabled)') ?? []);
+  useEffect(() => {
+    if (isOpen) items()[0]?.focus();
+  }, [isOpen]);
+  const onKey = (e: React.KeyboardEvent) => {
+    const list = items();
+    const idx = list.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!isOpen) setOpen(id);
+      else list[(idx + 1) % list.length]?.focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (isOpen) list[(idx - 1 + list.length) % list.length]?.focus();
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      const i = MENU_IDS.indexOf(id);
+      const next = MENU_IDS[(i + (e.key === 'ArrowRight' ? 1 : MENU_IDS.length - 1)) % MENU_IDS.length];
+      setOpen(next);
+      (document.querySelector(`[data-menu="${next}"]`) as HTMLButtonElement | null)?.focus();
+    } else if (e.key === 'Escape') {
+      setOpen(null);
+      btn.current?.focus();
+    } else if ((e.key === 'Enter' || e.key === ' ') && e.target === btn.current) {
+      e.preventDefault();
+      setOpen(isOpen ? null : id);
+    }
+  };
+  return (
+    <div className={`menu ${isOpen ? 'open' : ''}`} onKeyDown={onKey}>
+      <button
+        ref={btn}
+        type="button"
+        className="menu-btn"
+        data-menu={id}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        onPointerDown={(e) => {
+          e.preventDefault();
+          setOpen(isOpen ? null : id);
+        }}
+        onPointerEnter={() => {
+          if (open && !isOpen) setOpen(id);
+        }}
+      >
+        {label}
+      </button>
+      {isOpen && (
+        <div className="menu-popup" role="menu" ref={popup}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Item({ label, shortcut, onSelect, disabled, checked }: { label: string; shortcut?: string; onSelect: () => void; disabled?: boolean; checked?: boolean }): JSX.Element {
+  const { setOpen } = useContext(Ctx);
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      className="menu-item"
+      disabled={disabled}
+      onClick={() => {
+        setOpen(null);
+        onSelect();
+      }}
+    >
+      <span className="menu-check">{checked ? <Icon name="check" size={12} /> : null}</span>
+      <span className="menu-label">{label}</span>
+      {shortcut && <span className="menu-shortcut">{shortcut}</span>}
+    </button>
+  );
+}
+
+const Sep = () => <div className="menu-sep" role="separator" />;
+
+export function MenuBar({ workspace }: { workspace: RefObject<WorkspaceHandle | null> }): JSX.Element {
+  const editor = useEditor();
+  const s = useEditorState();
+  const [open, setOpen] = useState<string | null>(null);
+  const bar = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const colorInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (bar.current && !bar.current.contains(e.target as Node)) setOpen(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(null);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <Ctx.Provider value={{ open, setOpen }}>
+      <div className="menubar" ref={bar}>
+        <a className="brand" href="/" data-tip="关于画图">
+          <Icon name="logo" size={14} />
+          <span>Paint</span>
+        </a>
+        <Menu id="file" label="文件">
+          <Item label="新建" shortcut={`${MOD}N`} onSelect={() => { editor.newDocument(); workspace.current?.fit(); }} />
+          <Item label="打开…" shortcut={`${MOD}O`} onSelect={() => fileInput.current?.click()} />
+          <Item label="保存为 PNG" shortcut={`${MOD}S`} onSelect={() => void editor.save()} />
+          <Item label="导出 PNG @2x" shortcut={`${MOD}⇧E`} onSelect={() => editor.exportImage({ format: 'png', scale: 2 })} />
+          <Item label="导出 JPEG" onSelect={() => editor.exportImage({ format: 'jpeg', quality: 0.92 })} />
+          <Item label="导出 WebP" onSelect={() => editor.exportImage({ format: 'webp', quality: 0.9 })} />
+          <Item label="将选区导出为 PNG" disabled={!s.selection} onSelect={() => editor.exportImage({ format: 'png', selectionOnly: true })} />
+          <Sep />
+          <Item label="画布属性…" shortcut={`${MOD}E`} onSelect={() => editor.openDialog('attributes')} />
+          <Item label="API / 中转站设置…" onSelect={() => editor.openDialog('key')} />
+        </Menu>
+        <Menu id="edit" label="编辑">
+          <Item label="撤销" shortcut={`${MOD}Z`} disabled={!s.canUndo && !s.pending} onSelect={() => editor.undo()} />
+          <Item label="重做" shortcut={isMac ? '⌘⇧Z' : 'Ctrl+Y'} disabled={!s.canRedo} onSelect={() => editor.redo()} />
+          <Sep />
+          <Item label="剪切" shortcut={`${MOD}X`} disabled={!s.selection} onSelect={() => editor.cut()} />
+          <Item label="复制" shortcut={`${MOD}C`} disabled={!s.selection} onSelect={() => editor.copy()} />
+          <Item label="复制为 PNG" shortcut={`${MOD}⇧C`} onSelect={() => void editor.copyAsPng()} />
+          <Item label="粘贴" shortcut={`${MOD}V`} onSelect={() => void editor.pasteFromSystem(workspace.current?.viewCenter())} />
+          <Item label="清除选区" shortcut="Del" disabled={!s.selection} onSelect={() => editor.deleteSelection()} />
+          <Item label="全选" shortcut={`${MOD}A`} onSelect={() => editor.selectAll()} />
+          <Sep />
+          <Item label="裁剪到选区" shortcut={`${MOD}⇧X`} disabled={!s.selection} onSelect={() => editor.crop()} />
+        </Menu>
+        <Menu id="view" label="视图">
+          <Item label="放大" shortcut={`${MOD}+`} onSelect={() => workspace.current?.zoomBy(1.25)} />
+          <Item label="缩小" shortcut={`${MOD}−`} onSelect={() => workspace.current?.zoomBy(0.8)} />
+          <Item label="实际大小" shortcut={`${MOD}0`} onSelect={() => workspace.current?.fit(1)} />
+          <Item label="适合窗口" shortcut="⇧1" onSelect={() => workspace.current?.fit()} />
+          <Item label="缩放到选区" shortcut="⇧2" disabled={!s.selection} onSelect={() => workspace.current?.zoomToSelection()} />
+          <Sep />
+          <Item label="网格线" checked={s.gridlines} onSelect={() => editor.setGridlines(!s.gridlines)} />
+          <Item label="绘图侧栏" checked={s.showLibrary} onSelect={() => editor.setShowLibrary(!s.showLibrary)} />
+          <Item label="历史记录" checked={s.showVersions} onSelect={() => editor.setShowVersions(!s.showVersions)} />
+          <Item label="提示词列表" checked={s.showPrompts} onSelect={() => editor.setShowPrompts(!s.showPrompts)} />
+          <Sep />
+          <Item label="外观：跟随系统" checked={s.theme === 'system'} onSelect={() => editor.setTheme('system')} />
+          <Item label="外观：浅色" checked={s.theme === 'light'} onSelect={() => editor.setTheme('light')} />
+          <Item label="外观：深色" checked={s.theme === 'dark'} onSelect={() => editor.setTheme('dark')} />
+        </Menu>
+        <Menu id="image" label="图像">
+          <Item label="翻转/旋转…" shortcut={`${MOD}R`} onSelect={() => editor.openDialog('flip')} />
+          <Item label="拉伸…" shortcut={`${MOD}W`} onSelect={() => editor.openDialog('stretch')} />
+          <Item label="反色" shortcut={`${MOD}I`} onSelect={() => editor.invertColors()} />
+          <Item label="画布属性…" shortcut={`${MOD}E`} onSelect={() => editor.openDialog('attributes')} />
+          <Item label="清空图像" shortcut={`${MOD}⇧N`} onSelect={() => editor.clearImage()} />
+          <Item label="裁剪透明边缘" onSelect={() => editor.trimToContent()} />
+          <Sep />
+          <Item label="AI 仅查看选区" checked={s.editMode === 'selection'} onSelect={() => editor.setEditMode('selection')} />
+          <Item label="AI 同时查看周围内容" checked={s.editMode !== 'selection'} onSelect={() => editor.setEditMode('maskref')} />
+        </Menu>
+        <Menu id="colors" label="颜色">
+          <Item label="编辑颜色…" onSelect={() => colorInput.current?.click()} />
+          <Item label="交换前景色和背景色" onSelect={() => editor.swapColors()} />
+        </Menu>
+        <Menu id="help" label="帮助">
+          <Item label="键盘快捷键" shortcut="?" onSelect={() => editor.openDialog('shortcuts')} />
+          <Item label="关于画图" onSelect={() => editor.openDialog('about')} />
+        </Menu>
+
+        <div className="menubar-spacer" />
+
+        <label className="model-select" title={MODELS.find((m) => m.id === s.model)?.hint}>
+          <Icon name="sparkle" size={13} />
+          <select value={`${s.model}|${s.quality}`} onChange={(e) => { const [m, q] = e.target.value.split('|'); editor.setModel(m as ModelId); editor.setQuality(q as Quality); }} aria-label="图像模型和质量" data-testid="model-select">
+            {!MODELS.some((m) => m.id === s.model) && (['low', 'medium', 'high'] as const).map((q) => (
+              <option key={q} value={`${s.model}|${q}`}>{s.model} · {{ low: '低', medium: '中', high: '高' }[q]}</option>
+            ))}
+            {MODELS.some((m) => m.id === s.model) && !MODEL_PRESETS.some((m) => m.value === `${s.model}|${s.quality}`) && (
+              <option value={`${s.model}|${s.quality}`}>{s.model} · {s.quality}</option>
+            )}
+            {MODEL_PRESETS.map((m) => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+          <Icon name="chevron" size={12} className="chev" />
+        </label>
+        <button type="button" className="icon-btn" onClick={() => editor.setTheme(resolvedTheme(s.theme) === 'dark' ? 'light' : 'dark')} title="切换浅色/深色外观" aria-label="切换外观" data-testid="theme-toggle">
+          <Icon name={resolvedTheme(s.theme) === 'dark' ? 'sun' : 'moon'} size={14} />
+        </button>
+        <button type="button" className={`key-btn ${s.oauth || s.apiKey ? 'set' : ''}`} onClick={() => editor.openDialog('key')} title={s.oauth ? `Signed in with OpenAI${s.oauth.email ? ` as ${s.oauth.email}` : ''}` : s.apiKey ? 'Using an API key (stored only in this browser)' : 'Sign in with OpenAI or add an API key'} data-testid="key-btn">
+          {s.oauth ? <span className="acct-dot" /> : <Icon name={s.apiKey ? 'key' : 'logo'} size={13} />}
+          {s.oauth ? '已登录 OpenAI' : s.apiKey ? 'API / 中转站设置' : '连接图像服务'}
+        </button>
+
+        <input ref={fileInput} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void editor.openFile(f).then(() => workspace.current?.fit()); e.target.value = ''; }} />
+        <input ref={colorInput} type="color" className="hidden-color" value={s.color1} onChange={(e) => editor.addCustomColor(e.target.value)} aria-label="编辑颜色" />
+      </div>
+    </Ctx.Provider>
+  );
+}
